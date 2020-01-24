@@ -241,37 +241,31 @@ var run = function() {
                 // In addition to the *require* property, which is explained above, items can also define a *max*. If they
                 // do, no more than that resource will be automatically produced. This feature can not be controlled through
                 // the UI and is not used for any resource by default.
-                // The *limited* property tells KS to craft resources whenever the ratio of the component cost of the stored resources
-                // to the number of stored components is greater than the limit ratio "limRat".
-                // This means that if limRat is 0.5, then if you have 1000 beams and 500 beams worth of scaffolds, 250 of the beams
-                // will be crafted into scaffolds. If instead limRat is 0.75, 625 of the beams will be crafted into scaffolds for a final result
-                // of 1125 beams-worth of scaffolds and 375 remaining beams.
-                // Currently, limRat is not modifiable through the UI, though if there is demand, perhaps this will be added in the future.
-                // Limited has a few other effects like balancing plates and steel while minimizing iron waste
+                // The *limited* property tells KS to craft resources whenever the per tick production of the products is lower than all of the inputs, weighted by the crafting ratio
                 
                 // TLDR: The purpose of the limited property is to proportionally distribute raw materials
                 // across all crafted resources without wasting raw materials.
                 
                 items: {
-                    wood:       {require: 'catnip',      max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    beam:       {require: 'wood',        max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    slab:       {require: 'minerals',    max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    steel:      {require: 'coal',        max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    plate:      {require: 'iron',        max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    alloy:      {require: 'titanium',    max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    concrete:   {require: false,         max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    gear:       {require: false,         max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    scaffold:   {require: false,         max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    ship:       {require: false,         max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    tanker:     {require: false,         max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    parchment:  {require: false,         max: 0, limited: false, limRat: 0.5, enabled: true},
-                    manuscript: {require: 'culture',     max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    compendium: {require: 'science',     max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    blueprint:  {require: 'science',     max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    kerosene:   {require: 'oil',         max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    megalith:   {require: false,         max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    eludium:    {require: 'unobtainium', max: 0, limited: true,  limRat: 0.5, enabled: true},
-                    thorium:    {require: 'uranium',     max: 0, limited: true,  limRat: 0.5, enabled: true}
+                    wood:       {require: 'catnip',      max: 0, limited: true, enabled: true},
+                    beam:       {require: 'wood',        max: 0, limited: true, enabled: true},
+                    slab:       {require: 'minerals',    max: 0, limited: true, enabled: true},
+                    steel:      {require: 'coal',        max: 0, limited: true, enabled: true},
+                    plate:      {require: 'iron',        max: 0, limited: true, enabled: true},
+                    alloy:      {require: 'titanium',    max: 0, limited: true, enabled: true},
+                    concrete:   {require: false,         max: 0, limited: true, enabled: true},
+                    gear:       {require: false,         max: 0, limited: true, enabled: true},
+                    scaffold:   {require: false,         max: 0, limited: true, enabled: true},
+                    ship:       {require: false,         max: 0, limited: true, enabled: true},
+                    tanker:     {require: false,         max: 0, limited: true, enabled: true},
+                    parchment:  {require: false,         max: 0, limited: false, enabled: true},
+                    manuscript: {require: 'culture',     max: 0, limited: true, enabled: true},
+                    compendium: {require: 'science',     max: 0, limited: true, enabled: true},
+                    blueprint:  {require: 'science',     max: 0, limited: true, enabled: true},
+                    kerosene:   {require: 'oil',         max: 0, limited: true, enabled: true},
+                    megalith:   {require: false,         max: 0, limited: true, enabled: true},
+                    eludium:    {require: 'unobtainium', max: 0, limited: true, enabled: true},
+                    thorium:    {require: 'uranium',     max: 0, limited: true, enabled: true}
                 }
             },
             trade: {
@@ -356,8 +350,8 @@ var run = function() {
                 furs:   {stock: 1000}
             },
             cache: {
-                cache:    [],
-                cacheSum: {}
+                cache: {},
+                matTick: {}
             }
         }
     };
@@ -460,6 +454,7 @@ var run = function() {
         },
         iterate: function () {
             var subOptions = options.auto.options;
+            this.cacheManager.cacheTickVals();
             if (subOptions.enabled && subOptions.items.observe.enabled)  {this.observeStars()};
             if (options.auto.upgrade.enabled)                            {this.upgrade()};
             if (subOptions.enabled && subOptions.items.festival.enabled) {this.holdFestival()};
@@ -893,19 +888,17 @@ var run = function() {
                 var craft = crafts[name];
                 var current = !craft.max ? false : manager.getResource(name);
                 var require = !craft.require ? false : manager.getResource(craft.require);
-                var season = game.calendar.season;
-                var amount = 0;
                 // Ensure that we have reached our cap
                 if (current && current.value > craft.max) continue;
                 if (!manager.singleCraftPossible(name)) {continue;}
                 // Craft the resource if we meet the trigger requirement
                 if (!require || trigger <= require.value / require.maxValue) {
-                    amount = manager.getLowestCraftAmount(name, craft.limited, craft.limRat, true);
+                    var craftData = manager.getLowestCraftAmount(name, craft.limited, true);
                 } else if (craft.limited) {
-                    amount = manager.getLowestCraftAmount(name, craft.limited, craft.limRat, false);
+                    var craftData = manager.getLowestCraftAmount(name, craft.limited, false);
                 }
-                if (amount > 0) {
-                    manager.craft(name, amount);
+                if (craftData && craftData.amount > 0) {
+                    manager.craft(name, craftData);
                 }
             }
         },
@@ -917,9 +910,9 @@ var run = function() {
             if (craftManager.getValueAvailable('manpower', true) < 1500 || craftManager.getValueAvailable('culture', true) < 5000 
                 || craftManager.getValueAvailable('parchment', true) < 2500) {return;}
           
-            var catpowProf = 4000 * craftManager.getTickVal(craftManager.getResource('manpower'), true) > 1500;
-            var cultureProf = 4000 * craftManager.getTickVal(craftManager.getResource('culture'), true) > 5000;
-            var parchProf = 4000 * craftManager.getTickVal(craftManager.getResource('parchment'), true) > 2500;
+            var catpowProf = 4000 * craftManager.getTickVal(craftManager.getResource('manpower')) > 1500;
+            var cultureProf = 4000 * craftManager.getTickVal(craftManager.getResource('culture')) > 5000;
+            var parchProf = 4000 * craftManager.getTickVal(craftManager.getResource('parchment')) > 2500;
           
             if (!(catpowProf && cultureProf && parchProf)) {return;}
           
@@ -962,7 +955,7 @@ var run = function() {
                     trueOutput[out] = (res.maxValue > 0) ? Math.min(aveOutput[out] * huntCount, Math.max(res.maxValue - res.value, 0)) : aveOutput[out] * huntCount;
                 }
 
-                this.cacheManager.pushToCache({'materials': trueOutput, 'timeStamp': game.timer.ticksTotal});
+                this.cacheManager.pushToCache('hunt', {'materials': trueOutput, 'timeStamp': game.timer.ticksTotal});
               
                 game.village.huntAll();
             }
@@ -1074,9 +1067,8 @@ var run = function() {
                     if (!tradeNet[out]) {tradeNet[out] = 0;}
                     tradeNet[out] += (res.maxValue > 0) ? Math.min(meanOutput[out] * tradesDone[name], Math.max(res.maxValue - res.value, 0)) : meanOutput[out] * tradesDone[name];
                 }
+                cacheManager.pushToCache('trade-' + name, {'materials': tradeNet, 'timeStamp': game.timer.ticksTotal});
             }
-
-            cacheManager.pushToCache({'materials': tradeNet, 'timeStamp': game.timer.ticksTotal});
           
             for (var name in tradesDone) {
                 if (tradesDone[name] > 0) {
@@ -1517,19 +1509,18 @@ var run = function() {
     };
 
     CraftManager.prototype = {
-        craft: function (name, amount) {
-            amount = Math.floor(amount);
-
+        craft: function (name, craftData) {
+            var amount = craftData.amount;
             if (!name || 1 > amount) return;
             if (!this.canCraft(name, amount)) return;
 
             var craft = this.getCraft(name);
-            var ratio = game.getResCraftRatio(craft);
 
             game.craft(craft.name, amount);
+            this.cacheManager.pushToCache('craft-' + craft.name, {'materials': craftData.materials, 'timeStamp': game.timer.ticksTotal});
 
             // determine actual amount after crafting upgrades
-            amount = (amount * (1 + ratio)).toFixed(2);
+            amount = craftData.materials[name].toFixed(2);
 
             storeForSummary(ucfirst(name), amount, 'craft');
             activity('Kittens have crafted ' + game.getDisplayValueExt(amount) + ' ' + ucfirst(name), 'ks-craft');
@@ -1564,7 +1555,7 @@ var run = function() {
             }
             return true;
         },
-        getLowestCraftAmount: function (name, limited, limRat, aboveTrigger) {
+        getLowestCraftAmount: function (name, limited, aboveTrigger) {
             var amount = Number.MAX_VALUE;
             var plateMax = Number.MAX_VALUE;
             var materials = this.getMaterials(name);
@@ -1574,19 +1565,32 @@ var run = function() {
             var trigger = options.auto.craft.trigger;
             var optionVal = options.auto.options.enabled && options.auto.options.items.shipOverride.enabled;
           
+            var cache = options.auto.cache.cache;
+            var eventName = 'craft-' + craft.name;
+            var calcTime = game.timer.ticksTotal;
+            if (cache[eventName]) {
+                var subCache = cache[eventName];
+                var timeBetweenEvents = (subCache.length >= 2) ? (subCache[1].timeStamp - subCache[0].timeStamp) : subCache[0].timeStamp;
+                var timeSinceEvent = game.timer.ticksTotal - subCache[subCache.length-1].timeStamp;
+                if (timeSinceEvent < 0) {timeSinceEvent = game.timer.ticksTotal;}
+                calcTime = Math.max(timeBetweenEvents, timeSinceEvent);
+            }
+          
             // Safeguard if materials for craft cannot be determined.
             if (!materials) return 0;
-            
+          
             if (name==='steel' && limited) {
                 var plateRatio=game.getResCraftRatio(this.getCraft('plate'));
-                if (this.getValueAvailable('plate')/this.getValueAvailable('steel') < ((plateRatio+1)/125)/((ratio+1)/100)) {
+                if (this.getTickVal(this.getResource('steel')) < 0) {return 0;}
+                if (this.getTickVal(this.getResource('plate'))/this.getTickVal(this.getResource('steel')) < ((plateRatio+1)/125)/((ratio+1)/100)) {
                     return 0;
                 }
             } else if (name==='plate' && limited) {
                 var steelRatio=game.getResCraftRatio(this.getCraft('steel'));
-                if (game.getResourcePerTick('coal', true) > 0) {
-                    if (this.getValueAvailable('plate')/this.getValueAvailable('steel') > ((ratio+1)/125)/((steelRatio+1)/100)) {
-                        var ironInTime = ((this.getResource('coal').maxValue*trigger - this.getValue('coal'))/game.getResourcePerTick('coal', true))*Math.max(game.getResourcePerTick('iron', true), 0);
+                if (this.getTickVal(this.getResource('plate')) < 0) {return 0;}
+                if (this.getTickVal(this.getResource('coal')) > 0) {
+                    if (this.getTickVal(this.getResource('plate'))/this.getTickVal(this.getResource('steel')) > ((ratio+1)/125)/((steelRatio+1)/100)) {
+                        var ironInTime = ((this.getResource('coal').maxValue*trigger - this.getValue('coal'))/this.getTickVal(this.getResource('coal')))*Math.max(this.getTickVal(this.getResource('iron')), 0);
                         plateMax = (this.getValueAvailable('iron') - Math.max(this.getResource('coal').maxValue*trigger - ironInTime,0))/125;
                     }
                 }
@@ -1596,18 +1600,15 @@ var run = function() {
 
             for (var i in materials) {
                 var delta = undefined;
-                if (! limited || (this.getResource(i).maxValue > 0 && aboveTrigger) || (name === 'ship' && optionVal && (this.getResource('ship').value < 243)) ) {
+                if (!limited || (this.getResource(i).maxValue > 0 && aboveTrigger) || (name === 'ship' && optionVal && (this.getResource('ship').value < 243)) ) {
                     // If there is a storage limit, we can just use everything returned by getValueAvailable, since the regulation happens there
                     delta = this.getValueAvailable(i) / materials[i];
                 } else {
-                    // Take the currently present amount of material to craft into account
-                    // Currently this determines the amount of resources that can be crafted such that base materials are proportionally distributed across limited resources.
-                    // This base material distribution is governed by limRat "limited ratio" which defaults to 0.5, corresponding to half of the possible components being further crafted.
-                    // If this were another value, such as 0.75, then if you had 10000 beams and 0 scaffolds, 7500 of the beams would be crafted into scaffolds.
-                    delta = limRat * ((this.getValueAvailable(i, true) + (materials[i] / (1 + ratio)) * this.getValueAvailable(res.name, true)) / materials[i]) - (this.getValueAvailable(res.name, true) / (1 + ratio));
+                    //Limited mode attempts to balance the input and output materials per tick, weighted by the crafting ratio.
+                    delta = Math.min(this.getValueAvailable(i) / materials[i], ((this.getTickVal(this.getResource(i))/materials[i]) - (this.getTickVal(res)/(1 + ratio))) * calcTime / 2);
                 }
 
-                amount = Math.min(delta,amount,plateMax);
+                amount = Math.max(Math.min(delta, amount, plateMax), 0);
             }
 
             // If we have a maximum value, ensure that we don't produce more than
@@ -1617,7 +1618,16 @@ var run = function() {
             if (res.maxValue > 0 && amount > (res.maxValue - res.value))
                 amount = res.maxValue - res.value;
 
-            return Math.floor(amount);
+            var craftData = {};
+            craftData['materials'] = {};
+            craftData['amount'] = Math.floor(amount);
+          
+            for (var i in materials) {
+                craftData.materials[i] = (-materials[i]) * craftData.amount;
+            }
+            craftData.materials[name] = (1 + ratio) * craftData.amount;
+
+            return craftData;
         },
         getMaterials: function (name) {
             var materials = {};
@@ -1636,21 +1646,11 @@ var run = function() {
 
             return materials;
         },
-        getTickVal: function (res, preTrade) {
+        getTickVal: function (res) {
+            if (!res.name) {console.log('Some getTickVal call has a typo, please open an issue on GitHub. Resource passed is: ' + res);}
             var prod = game.getResourcePerTick(res.name, true);
-            if (res.craftable) {
-                var minProd=Number.MAX_VALUE;
-                var materials = this.getMaterials(res.name);
-                for (var mat in materials) {
-                    var rat = (1+game.getResCraftRatio(res.name))/materials[mat];
-                    //Currently preTrade is only true for the festival stuff, so including furs from hunting is ideal.
-                    var addProd = this.getTickVal(this.getResource(mat));
-                    minProd = Math.min(addProd * rat, minProd);
-                }
-                prod += (minProd!==Number.MAX_VALUE) ? minProd : 0;
-            }
             if (prod <= 0 && (res.name === 'spice' || res.name === 'blueprint')) {return 'ignore';}
-            if (!preTrade) {prod += this.cacheManager.getResValue(res.name)};
+            if (options.auto.cache.matTick[res.name]) {prod += options.auto.cache.matTick[res.name];}
             return prod;
         },
         getAverageHunt: function() {
@@ -2135,42 +2135,46 @@ var run = function() {
     var CacheManager = function () {};
 
     CacheManager.prototype = {
-        pushToCache: function (data) {
+        pushToCache: function (event, data) {
             var cache = options.auto.cache.cache;
-            var cacheSum = options.auto.cache.cacheSum;
-            var materials = data['materials'];
-            var currentTick = game.timer.ticksTotal;
-
-            cache.push(data);
-            for (var mat in materials) {
-                if (!cacheSum[mat]) {cacheSum[mat] = 0;}
-                cacheSum[mat] += materials[mat];
-            }
           
-            for (var i = 0; i < cache.length; i++) {
-                var oldData = cache[i];
-                if (cache.length > 10000) {
-                    var oldMaterials = oldData['materials'];
-                    for (var mat in oldMaterials) {
-                        if (!cacheSum[mat]) {cacheSum[mat] = 0;}
-                        cacheSum[mat] -= oldMaterials[mat];
-                    }
-                    cache.shift();
+            if (!cache[event]) {cache[event] = [];}
+            cache[event].push(data);
+            var subCache = cache[event];
+          
+            for (var i = 0; i < subCache.length; i++) {
+                var oldData = subCache[i];
+                if (subCache.length > 2) {
+                    subCache.shift();
                     i--;
                 } else {
                     return;
                 }
             }
         },
-        getResValue: function (res) {
+        cacheTickVals: function () {
             var cache = options.auto.cache.cache;
-            if (cache.length === 0) {return 0;}
-            var cacheSum = options.auto.cache.cacheSum;
-            if (!cacheSum[res]) {return 0;}
-            var currentTick = game.timer.ticksTotal;
-            var startingTick = cache[0].timeStamp;
-
-            return (cacheSum[res] / (currentTick - startingTick));
+            var matTick = options.auto.cache.matTick;
+            for (var mat in matTick) {
+                matTick[mat] = 0;
+            }
+          
+            for (var event in cache) {
+                var subCache = cache[event];
+                var lastEvent = subCache[subCache.length-1];
+                var timeBetweenEvents = (subCache.length >= 2) ? (subCache[1].timeStamp - subCache[0].timeStamp) : subCache[0].timeStamp;
+                var timeSinceEvent = game.timer.ticksTotal - subCache[subCache.length-1].timeStamp;
+                if (timeSinceEvent < 0) {timeSinceEvent = game.timer.ticksTotal;}
+                var calcTime = Math.max(timeBetweenEvents, timeSinceEvent);
+              
+                for (var mat in lastEvent.materials) {
+                    if (!matTick[mat]) {
+                        matTick[mat] = lastEvent.materials[mat]/calcTime;
+                    } else {
+                        matTick[mat] += lastEvent.materials[mat]/calcTime;
+                    }
+                }
+            }
         }
     };
 
